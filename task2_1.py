@@ -1,7 +1,9 @@
 from pyspark import SparkContext
 from math import sqrt
+import time
 
 sc = SparkContext()
+start_time = time.time()
 
 def split_and_int(s):
     t = s.split(",")
@@ -60,34 +62,94 @@ def find_similarity(active_item_dict, item_dict):
     if pearson_numerator == 0 or pearson_denom == 0:
         return 0
     sim = pearson_numerator / pearson_denom
-    print("Sim=",sim )
+    # print("Sim=",sim )
     return sim
+
+
+def find_weighted_average(similarity_list):
+    numerator = 0
+    denominator = 0
+    numer_sum = 0
+    for row in similarity_list:
+        numerator += (row[2] * row[3])
+        denominator += abs(row[3])
+        numer_sum += row[2]
+
+    if denominator != 0:
+        return numerator/denominator
+    else:
+        return numer_sum/len(similarity_list)
+
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 train_rdd = sc.textFile("yelp_train.csv").filter(lambda s: s.startswith('user_id') is False) \
     .map(split_and_int) # user_id, item_id, rating
 
-train_rdd_gbyuser = train_rdd.map(lambda x: (x[0], (x[1], x[2]))).groupByKey().persist() #user,[item,...]
+train_rdd_gbuser = train_rdd.map(lambda x: (x[0], (x[1], x[2]))).groupByKey().persist() #user,[(item, rating)...]
+train_rdd_gbuser_dict = dict(train_rdd_gbuser.collect())
 train_rdd_gbitem = train_rdd.map(lambda x: (x[1], (x[0], x[2]))).groupByKey().persist()
+train_rdd_gbitem_dict = dict(train_rdd_gbitem.collect())
 
-test_rdd = sc.textFile("yelp_val.csv").filter(lambda s: s.startswith('user_id') is False).map(lambda s: tuple(s.split(",")))
+test_rdd = sc.textFile("yelp_val.csv").filter(lambda s: s.startswith('user_id') is False).map(lambda s: split_and_int(s))
 
-active_users_items = test_rdd.map(lambda t: (t[0], t[1])).collect()
+active_users_items = test_rdd.map(lambda t: (t[0], t[1]))
 
-similarity_list = []
-for (active_user, active_item) in active_users_items:
+def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict):
+    """
+    I/P = (active_user, active_item)
+    :return: (active_user, active_item, pred
+    """
+    active_user = actives[0]
+    active_item = actives[1]
+
     # all user, ratings that have rated active_item
-    active_item_dict = dict(list(train_rdd_gbitem.filter(lambda k: k[0] == active_item).collect()[0][1]))
+    if active_item in train_rdd_gbitem_dict:
+        active_item_dict = dict(list(train_rdd_gbitem_dict[active_item])) # {user: rating, user: rating, ...}
+    else:
+        # item not found in training set
+        # new item problem.
+        average_of_user_list = list(train_rdd_gbuser_dict[active_user])
+        average_of_user = sum([x[1] for x in average_of_user_list]) / len(average_of_user_list)
+        return active_user, active_item, average_of_user
 
 
-    # user rated items - all item, ratings that the user has rated
-    active_user_rated_items = list(train_rdd_gbyuser.filter(lambda k: k[0] == active_user).collect()[0][1])
-    print(active_item_dict)
+    # user rated items - all (item, ratings) that the user has rated
+    if active_user in train_rdd_gbuser_dict:
+        active_user_rated_items = list(train_rdd_gbuser_dict[active_user]) # [(item, rating), (item, rating), ...]
+    else:
+        # user not found in training set
+        # new user problem.
+        average_of_item_list = list(train_rdd_gbitem_dict[active_item])
+        average_of_item = sum(x[1] for x in average_of_item_list) / len(average_of_item_list)
+        return active_user, active_item, average_of_item
 
-    for (item, rating) in active_user_rated_items:
-        item_dict = dict(list(train_rdd_gbitem.filter(lambda k: k[0] == item).collect()[0][1]))
-        similarity = find_similarity(dict(active_item_dict), item_dict)
-        similarity_list.append((active_item, item, similarity))
+    similarity_list = []
 
-for i in similarity_list:
-    print(i)
+    for item, rating in active_user_rated_items:
+        item_dict = dict(list(train_rdd_gbitem_dict[item]))
+        similarity = find_similarity(dict(active_item_dict), dict(item_dict))
+        similarity_list.append((active_item, item, rating, similarity))
+
+    # Have obtained similarity list for active item and item from the above code.
+    # Filter according to a top 'N' items and then take avg rating.
+    similarity_list.sort(key=lambda x: x[3],reverse=True)
+    similarity_list = similarity_list[:len(similarity_list) // 3]
+    pred_rating = find_weighted_average(similarity_list)
+
+    # for i in similarity_list:
+        # print(i)
+    # print("Pred-rating: ", pred_rating)
+
+    return active_user, active_item, pred_rating
+
+
+result_rdd = active_users_items.map(lambda x: find_predictions(x, train_rdd_gbitem_dict, train_rdd_gbuser_dict))
+
+print("Test rdd count = ", test_rdd.count())
+print("result rdd count = ", result_rdd.count())
+
+# not accounted for new user, new item cold start problem.
+# find out mean error. :/ (hopeful to be not bad)
+
+print("Time taken: ", time.time() - start_time,"s")
