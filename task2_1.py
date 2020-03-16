@@ -92,6 +92,7 @@ def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict):
     active_user = actives[0][0]
     active_item = actives[0][1]
 
+    # have to optimise
     # all user, ratings that have rated active_item
     if active_item in train_rdd_gbitem_dict:
         active_item_dict = dict(list(train_rdd_gbitem_dict[active_item]))  # {user: rating, user: rating, ...}
