@@ -109,7 +109,6 @@ def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict):
 
     return (active_user, active_item), pred_rating
 
-
 # ----------------------------------------------------------------------------------------------------------------------
 
 train_rdd = sc.textFile("yelp_train.csv").filter(lambda s: s.startswith('user_id') is False) \
@@ -162,28 +161,7 @@ t7 = time.time()
 print("Time taken to calc rmse = ", t7 - t6, "s")
 
 rmse = sqrt(x)
-
 print("RMSE = ", rmse)
-
-#  print(result_rdd.take(5))
-
-# test_rdd_dict = dict(test_rdd.collect())
-# pred_rdd_dict = dict(pred_rdd.collect())
-
-# testrdd - (active_user, active_item, rating)
-# resultrdd - (Active_user, active_item, pred_rating)
-
-
-'''summation = 0
-for i in test_rdd_dict:
-    if i in pred_rdd_dict:
-        summation += (test_rdd_dict[i] - pred_rdd_dict[i])**2
-
-    result = summation / len(test_rdd_dict)
-
-    rmse = sqrt(result)
-
-print("RMSE = ", rmse)'''
 
 # not accounted for new user & new item cold start problem.
 # find out mean error. :/ (hopeful to be not bad)
