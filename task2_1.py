@@ -1,7 +1,6 @@
 from pyspark import SparkContext
 from math import sqrt
-from math import floor
-from math import ceil
+import sys
 
 import time
 
@@ -83,6 +82,9 @@ def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict, num_
     # train_rdd_gbitem_dict = (item, ([(user,r),(user,r)...],avg_of_item))
     # train_rdd_gbuser_dict = (user, [(item,r),(item,r)...]
 
+    if active_user not in train_rdd_gbuser_dict and active_item not in train_rdd_gbitem_dict:
+        return (active_user, active_item), 2.5
+
     # all user, ratings that have rated active_item
     if active_item in train_rdd_gbitem_dict:
         active_item_avg = train_rdd_gbitem_dict[active_item][1]
@@ -125,21 +127,20 @@ def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict, num_
 
 # ----------------------------------------------------------------------------------------------------------------------
 
-train_rdd = sc.textFile("yelp_train.csv").filter(lambda s: s.startswith('user_id') is False) \
+train_rdd = sc.textFile(str(sys.argv[1])).filter(lambda s: s.startswith('user_id') is False) \
     .map(split_and_int)  # user_id, item_id, rating
 
-# num_users = train_rdd.map(lambda x: x[0]).distinct().count()
 num_items = train_rdd.map(lambda x: x[1]).distinct().count()
 
-t1 = time.time()
-print("Time taken to load train_rdd = ", t1 - start_time, "s")
+# t1 = time.time()
+# print("Time taken to load train_rdd = ", t1 - start_time, "s")
 
 train_rdd_gbuser = train_rdd.map(lambda x: (x[0], (x[1], x[2]))).groupByKey().mapValues(
     lambda x: list(x))  # user,[(item, rating)...]
 train_rdd_gbuser_dict = dict(train_rdd_gbuser.collect())
 
-t2 = time.time()
-print("Time taken to map and group train_rdduser = ", t2 - t1, "s")
+# t2 = time.time()
+# print("Time taken to map and group train_rdduser = ", t2 - t1, "s")
 
 train_rdd_gbitem = train_rdd.map(lambda x: (x[1], (x[0], x[2]))).groupByKey().mapValues(lambda x: list(x)).mapValues(
     lambda l: (l, sum([i[1] for i in l]) / len(l)))
@@ -147,40 +148,46 @@ train_rdd_gbitem_dict = dict(train_rdd_gbitem.collect())
 
 # print("\n",train_rdd_gbitem_dict.items())
 
-t3 = time.time()
-print("Time taken to map and group train_rdditem = ", t3 - t2, "s")
+# t3 = time.time()
+# print("Time taken to map and group train_rdditem = ", t3 - t2, "s")
 
-test_rdd = sc.textFile("yelp_val.csv").filter(lambda s: s.startswith('user_id') is False).map(
+test_rdd = sc.textFile(str(sys.argv[2])).filter(lambda s: s.startswith('user_id') is False).map(
     lambda s: split_and_int_tup(s)).persist()
 tcount = test_rdd.count()
 
-t4 = time.time()
-print("Time taken to load test_rdd = ", t4 - t3, "s")
-# active_users_items = test_rdd.map(lambda t: (t[0], t[1]))
+# t4 = time.time()
+# print("Time taken to load test_rdd = ", t4 - t3, "s")
 pred_rdd = test_rdd.map(lambda x: find_predictions(x, train_rdd_gbitem_dict, train_rdd_gbuser_dict, num_items)).persist()
 
-t5 = time.time()
-print("Time taken to generate preds-main step = ", t5 - t4, "s")
+# t5 = time.time()
+# print("Time taken to generate preds-main step = ", t5 - t4, "s")
 
 pred_count = pred_rdd.count()
-print("Test rdd count = ", test_rdd.count())
-print("result rdd count = ", pred_count)
+# print("Test rdd count = ", test_rdd.count())
+# print("result rdd count = ", pred_count)
 
-t6 = time.time()
-print("Time taken to generate rdd counts = ", t6 - t5, "s")
+# t6 = time.time()
+# print("Time taken to generate rdd counts = ", t6 - t5, "s")
 
 result_rdd = test_rdd.join(pred_rdd).map(lambda x: (x[1][0] - x[1][1]) ** 2)
 result = result_rdd.reduce(lambda x, y: x + y)
-print("Result(Numerator) = ", result)
+
+# print("Result(Numerator) = ", result)
+# t7 = time.time()
+# print("Time taken to calc rmse = ", t7 - t6, "s")
+
 x = result / pred_count
-
-t7 = time.time()
-print("Time taken to calc rmse = ", t7 - t6, "s")
-
 rmse = sqrt(x)
 print("RMSE = ", rmse)
 
 # not accounted for new user & new item cold start problem.
 # find out mean error. :/ (hopeful to be not bad)
+
+# writing to file
+with open(str(sys.argv[3]), "w") as file:
+    file.write("user_id, business_id, prediction")
+    for row in pred_rdd.collect():
+        file.write(str("\n" + row[0][0] + "," + row[0][1] + "," + str(row[1])))
+    file.close()
 
 print("Time taken: ", time.time() - start_time, "s")
