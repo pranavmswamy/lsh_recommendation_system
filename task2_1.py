@@ -1,5 +1,8 @@
 from pyspark import SparkContext
 from math import sqrt
+from math import floor
+from math import ceil
+
 import time
 
 sc = SparkContext()
@@ -32,9 +35,11 @@ def find_similarity(active_item_dict, active_item_avg, item_dict, item_avg):
 
     for user_id in active_item_dict:
         if user_id in item_dict:
-            pearson_numerator += ((active_item_dict[user_id] - active_item_avg) * (item_dict[user_id] - item_avg))
-            pearson_denom_left += (active_item_dict[user_id] - active_item_avg) ** 2
-            pearson_denom_right += (item_dict[user_id] - item_avg) ** 2
+            activeMinusavg = active_item_dict[user_id] - active_item_avg
+            itemMinusavg = item_dict[user_id] - item_avg
+            pearson_numerator += (activeMinusavg * itemMinusavg)
+            pearson_denom_left += activeMinusavg ** 2
+            pearson_denom_right += itemMinusavg ** 2
 
     pearson_denom = sqrt(pearson_denom_left * pearson_denom_right)
 
@@ -44,22 +49,29 @@ def find_similarity(active_item_dict, active_item_avg, item_dict, item_avg):
         return pearson_numerator / pearson_denom
 
 
-def find_weighted_average(similarity_list):
+def find_weighted_average(similarity_list, num_items):
     numerator = 0
     denominator = 0
     numer_sum = 0
+
+    len_sim_list = len(similarity_list)
+    num_empty_cells = num_items - len_sim_list
+
     for row in similarity_list:
         numerator += (row[0] * row[1])
         denominator += abs(row[1])
         numer_sum += row[0]
 
-    if denominator != 0:
-        return numerator / denominator
-    else:
-        return numer_sum / len(similarity_list)
+    user_avg = numer_sum/len_sim_list
+
+    denominator += num_empty_cells
+    numerator = numerator + num_empty_cells * user_avg
+
+    return numerator / denominator
 
 
-def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict):
+
+def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict, num_items):
     """
     I/P = (active_user, active_item)
     :return: (active_user, active_item, pred
@@ -99,9 +111,11 @@ def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict):
 
     # Have obtained similarity list for active item and item from the above code.
     # Filter according to a top 'N' items and then take avg rating.
-    similarity_list.sort(key=lambda x: x[1], reverse=True)
-    similarity_list = similarity_list[:len(similarity_list) // 4]
-    pred_rating = find_weighted_average(similarity_list)
+    # similarity_list.sort(key=lambda x: x[1], reverse=True)
+    # similarity_list = similarity_list[:len(similarity_list) // 4]
+    # similarity_list = [(x[0], x[1]*abs(x[1])**1.5) for x in similarity_list]
+    # print(similarity_list)
+    pred_rating = find_weighted_average(similarity_list, num_items)
 
     # for i in similarity_list:
     # print(i)
@@ -113,6 +127,9 @@ def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict):
 
 train_rdd = sc.textFile("yelp_train.csv").filter(lambda s: s.startswith('user_id') is False) \
     .map(split_and_int)  # user_id, item_id, rating
+
+# num_users = train_rdd.map(lambda x: x[0]).distinct().count()
+num_items = train_rdd.map(lambda x: x[1]).distinct().count()
 
 t1 = time.time()
 print("Time taken to load train_rdd = ", t1 - start_time, "s")
@@ -140,7 +157,7 @@ tcount = test_rdd.count()
 t4 = time.time()
 print("Time taken to load test_rdd = ", t4 - t3, "s")
 # active_users_items = test_rdd.map(lambda t: (t[0], t[1]))
-pred_rdd = test_rdd.map(lambda x: find_predictions(x, train_rdd_gbitem_dict, train_rdd_gbuser_dict)).persist()
+pred_rdd = test_rdd.map(lambda x: find_predictions(x, train_rdd_gbitem_dict, train_rdd_gbuser_dict, num_items)).persist()
 
 t5 = time.time()
 print("Time taken to generate preds-main step = ", t5 - t4, "s")
