@@ -53,6 +53,9 @@ def find_weighted_average(similarity_list, num_items):
     denominator = 0
     numer_sum = 0
 
+    if not similarity_list:
+        return 3.5
+
     len_sim_list = len(similarity_list)
     num_empty_cells = num_items - len_sim_list
 
@@ -115,7 +118,7 @@ def find_predictions(actives, train_rdd_gbitem_dict, train_rdd_gbuser_dict, num_
     # Filter according to a top 'N' items and then take avg rating.
     # similarity_list.sort(key=lambda x: x[1], reverse=True)
     # similarity_list = similarity_list[:len(similarity_list) // 4]
-    # similarity_list = [(x[0], x[1]*abs(x[1])**1.5) for x in similarity_list]
+    # similarity_list = [ x for x in similarity_list if x[1] > 0]
     # print(similarity_list)
     pred_rating = find_weighted_average(similarity_list, num_items)
 
