@@ -5,6 +5,7 @@ import sys
 import time
 
 sc = SparkContext()
+sc.setLogLevel("ERROR")
 start_time = time.time()
 
 
