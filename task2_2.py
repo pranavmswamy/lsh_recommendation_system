@@ -1,12 +1,12 @@
 import xgboost as xgb
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import mean_squared_error
 from math import sqrt
 from pyspark import SparkContext
 from json import loads
 from time import time
+from sys import argv
 
 
 # -----------------------------------
@@ -66,21 +66,22 @@ def unpack_business_joined_tuples(row):
 # ------------------------------------
 # initialising SparkContext
 sc = SparkContext()
+sc.setLogLevel("ERROR")
 
 # recording start time
 start_time = time()
 
 # Loading yelp_train, removing header and mapping it into tuples. (user_id, biz_id, rating)
-yelp_train_rdd = sc.textFile("yelp_train.csv").filter(lambda s: s.startswith('user_id') is False).map(split_and_int)
+yelp_train_rdd = sc.textFile(str(argv[1]+"/yelp_train.csv")).filter(lambda s: s.startswith('user_id') is False).map(split_and_int)
 
 # Loading yelp_val, removing header and mapping it into tuples. (user_id, biz_id)
-yelp_val_rdd = sc.textFile("yelp_val.csv").filter(lambda s: s.startswith('user_id') is False).map(split_and_int)
+yelp_val_rdd = sc.textFile(str(argv[2])).filter(lambda s: s.startswith('user_id') is False).map(split_and_int)
 
 # Loading user.json and filtering out extraneous data
-users_rdd = sc.textFile("user-002.json").map(loads).map(filter_user_data).persist()
+users_rdd = sc.textFile(str(argv[1]+"/user-002.json")).map(loads).map(filter_user_data).persist()
 
 # Loading business.json and filtering out extraneous data
-businesses_rdd = sc.textFile("business.json").map(loads).map(filter_business_data).persist()
+businesses_rdd = sc.textFile(str(argv[1]+"/business.json")).map(loads).map(filter_business_data).persist()
 
 # Joining yelp_train with user.json
 yelp_train_rdd = yelp_train_rdd.map(lambda x: (x[0], (x[1], x[2]))).join(users_rdd).map(unpack_user_joined_tuples)
@@ -119,6 +120,11 @@ yelp_val = pd.DataFrame(data=yelp_val_list, columns=['user_id', 'business_id', '
                                                      'fans', 'avg_stars_of_user', 'city', 'avg_stars_business',
                                                      'business_review_count', 'is_open', 'rating_y'])
 
+yelp_val_copy = yelp_val.copy()
+yelp_val_copy.drop(columns=['user_review_count', 'num_friends',
+                                                     'fans', 'avg_stars_of_user', 'city', 'avg_stars_business',
+                                                     'business_review_count', 'is_open'], inplace=True)
+
 numerical_vars = ['user_review_count', 'num_friends', 'fans', 'avg_stars_of_user', 'avg_stars_business',
                                                      'business_review_count', 'is_open', 'rating_y']
 
@@ -142,13 +148,20 @@ for col in yelp_val.columns:
 X_train, y_train = yelp_train.iloc[:, :-1], yelp_train.iloc[:, -1]
 X_test, y_test = yelp_val.iloc[:, :-1], yelp_val.iloc[:, -1]
 
+# building model and printing rmse
 yelp_train_dmatrix = xgb.DMatrix(data=X_train, label=y_train)
 xgb_model = xgb.XGBRegressor(learning_rate=0.1,n_estimators=250)
 xgb_model.fit(X_train, y_train)
 predictions = xgb_model.predict(X_test)
 
 rmse = sqrt(mean_squared_error(y_test, predictions))
-
 print("RMSE = ", rmse)
+print("Time taken: ", time() - start_time, "s")
 
-print("Time taken: ", time() - start_time)
+# Writing to file
+yelp_val_copy["prediction"] = predictions
+with open(str(argv[3]), "w") as file:
+    file.write("user_id, business_id, prediction")
+    for index, row in yelp_val_copy.iterrows():
+        file.write(str("\n" + row['user_id']+ "," + row['business_id'] + "," + str(row['prediction'])))
+    file.close()
